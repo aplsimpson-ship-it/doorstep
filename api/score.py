@@ -173,14 +173,38 @@ def get_transport(lat, lng):
         if not stops:
             return None
         stops.sort(key=lambda s: s.get("distance", 9999))
-        nearest  = stops[0]
-        dist_m   = nearest.get("distance", 0)
-        dist_mi  = round(dist_m * 0.000621371, 2)
-        walk_min = max(1, round(dist_m / 80))
+        nearest     = stops[0]
+        station_lat = nearest.get("lat", 0)
+        station_lng = nearest.get("lon", 0)
         lines = []
         for mode in nearest.get("lineModeGroups", []):
             lines.extend(mode.get("lineIdentifier", []))
         nice_lines = [l.replace("-", " ").title() for l in lines[:4]]
+
+        # ORS walking route
+        ors_key = os.environ.get("ORS_API_KEY", "")
+        if not ors_key or not station_lat or not station_lng:
+            return None
+
+        ors_payload = json.dumps({
+            "coordinates": [[lng, lat], [station_lng, station_lat]]
+        }).encode()
+        ors_req = urllib.request.Request(
+            "https://api.openrouteservice.org/v2/directions/foot-walking",
+            data=ors_payload,
+            headers={
+                "Authorization": ors_key,
+                "Content-Type": "application/json",
+                "User-Agent": "Mozilla/5.0"
+            },
+            method="POST"
+        )
+        with urllib.request.urlopen(ors_req, timeout=8) as r:
+            ors_data = json.loads(r.read())
+        segment = ors_data["routes"][0]["segments"][0]
+        dist_mi  = round(segment["distance"] * 0.000621371, 2)
+        walk_min = max(1, round(segment["duration"] / 60))
+
         return {
             "name":           nearest.get("commonName", "Unknown"),
             "distance_miles": dist_mi,
