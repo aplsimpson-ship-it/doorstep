@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 SCHOOLS_CSV_URL = (
-    "https://raw.githubusercontent.com/aplsimpson-ship-it/doorstep/main/schools_primary_1.csv"
+    "https://raw.githubusercontent.com/aplsimpson-ship-it/doorstep/main/schools_primary.csv"
 )
 
 # ── Caches ────────────────────────────────────────────────────────────────────
@@ -70,7 +70,7 @@ def load_schools():
                 "lng":      lng,
                 "postcode": row.get("Postcode", "").strip(),
                 "ofsted":   row.get("OfstedRating", "Not yet rated").strip(),
-                "religious": row.get("ReligiousCharacter (name)", "").strip()
+                "religious": row.get("ReligiousCharacter", "").strip()
                              not in ("", "None", "Does not apply"),
             })
         _schools_cache = schools
