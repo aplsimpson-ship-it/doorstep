@@ -201,54 +201,72 @@ def get_flood_risk(lat, lng):
 
 def get_transport(lat, lng):
     try:
-        url = (
-            f"https://api.tfl.gov.uk/StopPoint"
-            f"?lat={lat}&lon={lng}"
-            f"&stopTypes=NaptanMetroStation,NaptanRailStation"
-            f"&radius=1200"
-            f"&modes=tube,overground,elizabeth-line,national-rail"
-        )
-        data  = fetch_json(url, timeout=8)
-        stops = data.get("stopPoints", [])
-        if not stops:
-            return None
-        stops.sort(key=lambda s: s.get("distance", 9999))
-        nearest     = stops[0]
-        station_lat = nearest.get("lat", 0)
-        station_lng = nearest.get("lon", 0)
-        lines = []
-        for mode in nearest.get("lineModeGroups", []):
-            lines.extend(mode.get("lineIdentifier", []))
-        nice_lines = [l.replace("-", " ").title() for l in lines[:4]]
-
         ors_key = os.environ.get("ORS_API_KEY", "")
-        if not ors_key or not station_lat or not station_lng:
+
+        def get_nearest_stop(modes, stop_types):
+            url = (
+                f"https://api.tfl.gov.uk/StopPoint"
+                f"?lat={lat}&lon={lng}"
+                f"&stopTypes={stop_types}"
+                f"&radius=1500"
+                f"&modes={modes}"
+            )
+            data  = fetch_json(url, timeout=8)
+            stops = data.get("stopPoints", [])
+            if not stops:
+                return None
+            stops.sort(key=lambda s: s.get("distance", 9999))
+            nearest     = stops[0]
+            station_lat = nearest.get("lat", 0)
+            station_lng = nearest.get("lon", 0)
+            lines = []
+            for mode in nearest.get("lineModeGroups", []):
+                lines.extend(mode.get("lineIdentifier", []))
+            nice_lines = [l.replace("-", " ").title() for l in lines[:4]]
+
+            if not ors_key or not station_lat or not station_lng:
+                return None
+
+            ors_payload = json.dumps({
+                "coordinates": [[lng, lat], [station_lng, station_lat]]
+            }).encode()
+            ors_req = urllib.request.Request(
+                "https://api.openrouteservice.org/v2/directions/foot-walking",
+                data=ors_payload,
+                headers={
+                    "Authorization": ors_key,
+                    "Content-Type": "application/json",
+                    "User-Agent": "Mozilla/5.0"
+                },
+                method="POST"
+            )
+            with urllib.request.urlopen(ors_req, timeout=8) as r:
+                ors_data = json.loads(r.read())
+            segment = ors_data["routes"][0]["segments"][0]
+            return {
+                "name":           nearest.get("commonName", "Unknown"),
+                "distance_miles": round(segment["distance"] * 0.000621371, 2),
+                "walk_mins":      max(1, round(segment["duration"] / 60)),
+                "lines":          nice_lines,
+            }
+
+        tube       = get_nearest_stop("tube,elizabeth-line", "NaptanMetroStation")
+        overground = get_nearest_stop("overground,national-rail", "NaptanRailStation")
+
+        if not tube and not overground:
             return None
 
-        ors_payload = json.dumps({
-            "coordinates": [[lng, lat], [station_lng, station_lat]]
-        }).encode()
-        ors_req = urllib.request.Request(
-            "https://api.openrouteservice.org/v2/directions/foot-walking",
-            data=ors_payload,
-            headers={
-                "Authorization": ors_key,
-                "Content-Type": "application/json",
-                "User-Agent": "Mozilla/5.0"
-            },
-            method="POST"
+        # Only show overground/rail if it's closer than the tube
+        show_overground = (
+            overground and (
+                not tube or
+                overground["distance_miles"] < tube["distance_miles"]
+            )
         )
-        with urllib.request.urlopen(ors_req, timeout=8) as r:
-            ors_data = json.loads(r.read())
-        segment = ors_data["routes"][0]["segments"][0]
-        dist_mi  = round(segment["distance"] * 0.000621371, 2)
-        walk_min = max(1, round(segment["duration"] / 60))
 
         return {
-            "name":           nearest.get("commonName", "Unknown"),
-            "distance_miles": dist_mi,
-            "walk_mins":      walk_min,
-            "lines":          nice_lines,
+            "tube":       tube,
+            "overground": overground if show_overground else None,
         }
     except:
         return None
@@ -303,12 +321,18 @@ def build_prompt(postcode, listing_url, weights,
         if crime else "No crime data retrieved"
     )
 
-    transport_str = (
-        f"{transport['name']}, {transport['distance_miles']}mi "
-        f"({transport['walk_mins']} min walk). "
-        f"Lines: {', '.join(transport['lines'])}"
-        if transport else "No transport data retrieved"
-    )
+    def fmt_stop(s):
+        return f"{s['name']}, {s['distance_miles']}mi ({s['walk_mins']} min walk), Lines: {', '.join(s['lines'])}"
+
+    if not transport:
+        transport_str = "No transport data retrieved"
+    else:
+        parts = []
+        if transport.get("tube"):
+            parts.append(f"Nearest tube/Elizabeth line: {fmt_stop(transport['tube'])}")
+        if transport.get("overground"):
+            parts.append(f"Nearest overground/rail: {fmt_stop(transport['overground'])}")
+        transport_str = " | ".join(parts) if parts else "No transport data retrieved"
 
     wstr = ", ".join(f"{k}:{v}%" for k, v in weights.items()) if weights else \
            "schools:30%, transport:20%, crime:20%, amenities:15%, environment:10%, financials:5%"
@@ -337,8 +361,7 @@ Return ONLY a JSON object. No markdown, no explanation, just the JSON:
   "overallScore": <integer 0-100 reflecting weighted scores>,
   "summary": "3 honest sentences for a family with a toddler staying 10+ years. Do not mention price, tenure or chain status unless provided above.",
   "keyFacts": {{
-    "nearestTube": "<station name> · <distance>mi · <walk_mins> min walk",
-    "council": "borough name",
+        "nearestTube": "nearest tube/Elizabeth line station with distance and walk time. If overground/rail is also provided and closer, list that too.",    "council": "borough name",
     "schoolsNearby": "brief summary using real school names and ratings above",
     "floodRisk": "{flood_risk}"
   }},
