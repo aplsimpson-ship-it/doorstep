@@ -81,7 +81,7 @@ def load_schools():
 def get_schools(lat, lng):
     schools = load_schools()
     if not schools:
-        return [], []
+        return [{"name": "DEBUG: no schools loaded", "ofsted": "check URL", "distance_miles": 0, "urn": "", "postcode": "", "religious": False}], []
     nearby = []
     for s in schools:
         dist = haversine(lat, lng, s["lat"], s["lng"])
@@ -98,6 +98,8 @@ def get_schools(lat, lng):
     nearby.sort(key=lambda x: x["distance_miles"])
     nearest     = nearby[:2]
     outstanding = [s for s in nearby if "outstanding" in s["ofsted"].lower()][:2]
+    if not nearby:
+        return [{"name": f"DEBUG: {len(schools)} schools loaded but none within 1.5mi of {lat},{lng}", "ofsted": "check coords", "distance_miles": 0, "urn": "", "postcode": "", "religious": False}], []
     return nearest, outstanding
 
 # ── Crime ─────────────────────────────────────────────────────────────────────
