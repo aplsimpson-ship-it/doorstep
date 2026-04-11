@@ -7,119 +7,16 @@ import os
 import csv
 import io
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-OFSTED_CSV_URL = (
-    "https://assets.publishing.service.gov.uk/media/"
-    "698b20be95285e721cd7127d/"
-    "Management_information_-_state-funded_schools_-_"
-    "latest_inspections_as_at_31_Jan_2026.csv"
+SCHOOLS_CSV_URL = (
+    "https://raw.githubusercontent.com/aplsimpson-ship-it/doorstep/main/schools_primary.csv"
 )
 
 # ── Caches ────────────────────────────────────────────────────────────────────
 
-_ofsted_cache = None
-_gias_cache = None
-
-# ── Ofsted ratings ────────────────────────────────────────────────────────────
-
-def ofsted_code_to_label(code):
-    mapping = {
-        "1": "Outstanding",
-        "2": "Good",
-        "3": "Requires improvement",
-        "4": "Inadequate",
-        "9": "Not yet inspected",
-    }
-    return mapping.get(str(code).strip(), str(code).strip() or "Not rated")
-
-def load_ofsted_ratings():
-    global _ofsted_cache
-    if _ofsted_cache is not None:
-        return _ofsted_cache
-    try:
-        req = urllib.request.Request(
-            OFSTED_CSV_URL,
-            headers={"User-Agent": "Mozilla/5.0"}
-        )
-        with urllib.request.urlopen(req, timeout=15) as r:
-            content = r.read().decode("utf-8", errors="replace")
-        ratings = {}
-        reader = csv.DictReader(io.StringIO(content))
-        for row in reader:
-            urn = (row.get("URN") or row.get("urn") or "").strip()
-            rating = (
-                row.get("Overall effectiveness") or
-                row.get("Overall Effectiveness") or
-                row.get("overall_effectiveness") or ""
-            ).strip()
-            if urn and rating:
-                ratings[urn] = rating
-        _ofsted_cache = ratings
-        return ratings
-    except:
-        _ofsted_cache = {}
-        return {}
-
-# ── GIAS school data ──────────────────────────────────────────────────────────
-
-def load_gias_schools():
-    global _gias_cache
-    if _gias_cache is not None:
-        return _gias_cache
-    
-    # Try the last 7 days to handle weekends/holidays
-    from datetime import datetime, timedelta
-    base = datetime.utcnow()
-    urls_to_try = []
-    for i in range(7):
-        d = (base - timedelta(days=i)).strftime("%Y%m%d")
-        urls_to_try.append(
-            f"https://ea-edubase-api-prod.azurewebsites.net/edubase/downloads/public/edubasealldata{d}.csv"
-        )
-    
-    for url in urls_to_try:
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=25) as r:
-                if r.status != 200:
-                    continue
-                content = r.read().decode("utf-8", errors="replace")
-            schools = []
-            reader = csv.DictReader(io.StringIO(content))
-            for row in reader:
-                phase  = row.get("PhaseOfEducation (name)", "")
-                status = row.get("EstablishmentStatus (name)", "")
-                if "primary" not in phase.lower():
-                    continue
-                if "open" not in status.lower():
-                    continue
-                try:
-                    lat = float(row.get("Latitude", "") or 0)
-                    lng = float(row.get("Longitude", "") or 0)
-                except:
-                    continue
-                if not lat or not lng:
-                    continue
-                schools.append({
-                    "urn":      row.get("URN", "").strip(),
-                    "name":     row.get("EstablishmentName", "").strip(),
-                    "lat":      lat,
-                    "lng":      lng,
-                    "postcode": row.get("Postcode", "").strip(),
-                    "religious": row.get("ReligiousCharacter (name)", "").strip()
-                                 not in ("", "None", "Does not apply"),
-                })
-            if schools:
-                _gias_cache = schools
-                return schools
-        except:
-            continue
-    
-    _gias_cache = []
-    return []
+_schools_cache = None
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -147,9 +44,42 @@ def get_lat_lng(postcode):
 
 # ── Schools ───────────────────────────────────────────────────────────────────
 
+def load_schools():
+    global _schools_cache
+    if _schools_cache is not None:
+        return _schools_cache
+    try:
+        req = urllib.request.Request(SCHOOLS_CSV_URL, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            content = r.read().decode("utf-8", errors="replace")
+        schools = []
+        reader = csv.DictReader(io.StringIO(content))
+        for row in reader:
+            try:
+                lat = float(row.get("Latitude", "") or 0)
+                lng = float(row.get("Longitude", "") or 0)
+            except:
+                continue
+            if not lat or not lng:
+                continue
+            schools.append({
+                "urn":      row.get("URN", "").strip(),
+                "name":     row.get("EstablishmentName", "").strip(),
+                "lat":      lat,
+                "lng":      lng,
+                "postcode": row.get("Postcode", "").strip(),
+                "ofsted":   row.get("OfstedRating", "Not yet rated").strip(),
+                "religious": row.get("ReligiousCharacter (name)", "").strip()
+                             not in ("", "None", "Does not apply"),
+            })
+        _schools_cache = schools
+        return schools
+    except Exception as e:
+        _schools_cache = []
+        return []
+
 def get_schools(lat, lng):
-    ofsted  = load_ofsted_ratings()
-    schools = load_gias_schools()
+    schools = load_schools()
     if not schools:
         return [], []
     nearby = []
@@ -157,11 +87,9 @@ def get_schools(lat, lng):
         dist = haversine(lat, lng, s["lat"], s["lng"])
         if dist > 1.5:
             continue
-        raw_rating = ofsted.get(s["urn"], "")
-        rating = ofsted_code_to_label(raw_rating) if raw_rating else "Not yet rated"
         nearby.append({
             "name":           s["name"],
-            "ofsted":         rating,
+            "ofsted":         s["ofsted"],
             "distance_miles": round(dist, 2),
             "urn":            s["urn"],
             "postcode":       s["postcode"],
