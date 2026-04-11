@@ -69,45 +69,57 @@ def load_gias_schools():
     global _gias_cache
     if _gias_cache is not None:
         return _gias_cache
-    try:
-        today = datetime.utcnow().strftime("%Y%m%d")
-        url = (
-            f"https://ea-edubase-api-prod.azurewebsites.net/edubase/downloads/public/"
-            f"edubasealldata{today}.csv"
+    
+    # Try the last 7 days to handle weekends/holidays
+    from datetime import datetime, timedelta
+    base = datetime.utcnow()
+    urls_to_try = []
+    for i in range(7):
+        d = (base - timedelta(days=i)).strftime("%Y%m%d")
+        urls_to_try.append(
+            f"https://ea-edubase-api-prod.azurewebsites.net/edubase/downloads/public/edubasealldata{d}.csv"
         )
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=25) as r:
-            content = r.read().decode("utf-8", errors="replace")
-        schools = []
-        reader = csv.DictReader(io.StringIO(content))
-        for row in reader:
-            phase  = row.get("PhaseOfEducation (name)", "")
-            status = row.get("EstablishmentStatus (name)", "")
-            if "primary" not in phase.lower():
-                continue
-            if "open" not in status.lower():
-                continue
-            try:
-                lat = float(row.get("Latitude", "") or 0)
-                lng = float(row.get("Longitude", "") or 0)
-            except:
-                continue
-            if not lat or not lng:
-                continue
-            schools.append({
-                "urn":      row.get("URN", "").strip(),
-                "name":     row.get("EstablishmentName", "").strip(),
-                "lat":      lat,
-                "lng":      lng,
-                "postcode": row.get("Postcode", "").strip(),
-                "religious": row.get("ReligiousCharacter (name)", "").strip()
-                             not in ("", "None", "Does not apply"),
-            })
-        _gias_cache = schools
-        return schools
-    except:
-        _gias_cache = []
-        return []
+    
+    for url in urls_to_try:
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=25) as r:
+                if r.status != 200:
+                    continue
+                content = r.read().decode("utf-8", errors="replace")
+            schools = []
+            reader = csv.DictReader(io.StringIO(content))
+            for row in reader:
+                phase  = row.get("PhaseOfEducation (name)", "")
+                status = row.get("EstablishmentStatus (name)", "")
+                if "primary" not in phase.lower():
+                    continue
+                if "open" not in status.lower():
+                    continue
+                try:
+                    lat = float(row.get("Latitude", "") or 0)
+                    lng = float(row.get("Longitude", "") or 0)
+                except:
+                    continue
+                if not lat or not lng:
+                    continue
+                schools.append({
+                    "urn":      row.get("URN", "").strip(),
+                    "name":     row.get("EstablishmentName", "").strip(),
+                    "lat":      lat,
+                    "lng":      lng,
+                    "postcode": row.get("Postcode", "").strip(),
+                    "religious": row.get("ReligiousCharacter (name)", "").strip()
+                                 not in ("", "None", "Does not apply"),
+                })
+            if schools:
+                _gias_cache = schools
+                return schools
+        except:
+            continue
+    
+    _gias_cache = []
+    return []
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
