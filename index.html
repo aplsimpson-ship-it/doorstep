@@ -127,27 +127,17 @@ input[type=range] { flex: 1; accent-color: var(--green); }
 <main>
   <p style="font-family:var(--mono);font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:var(--ink-3);margin-bottom:10px">Property Intelligence</p>
   <h1>Rate any London property <em>instantly.</em></h1>
-  <p class="hero-desc">Paste an address or listing URL and get a verified scorecard using real data from Ofsted, TfL, Police and the Environment Agency.</p>
+  <p class="hero-desc">Enter a postcode to get a verified scorecard using real data from Ofsted, TfL, Police and the Environment Agency.</p>
 
   <div class="form-card">
     <div class="field-row">
       <div class="field">
-        <span class="field-label">Property address or listing URL</span>
-        <input type="text" id="address" placeholder="e.g. 10 Prospero Road, Archway, N19 3RF" />
-      </div>
-    </div>
-    <div class="field-row">
-      <div class="field">
-        <span class="field-label">Asking price (optional)</span>
-        <input type="text" id="price" placeholder="e.g. £650,000" />
+        <span class="field-label">Postcode</span>
+        <input type="text" id="postcode" placeholder="e.g. N19 3RF" />
       </div>
       <div class="field">
-        <span class="field-label">Tenure</span>
-        <input type="text" id="tenure" placeholder="Freehold / Leasehold" />
-      </div>
-      <div class="field">
-        <span class="field-label">Bedrooms</span>
-        <input type="text" id="beds" placeholder="e.g. 4" />
+        <span class="field-label">Property URL (optional)</span>
+        <input type="text" id="listing_url" placeholder="e.g. rightmove.co.uk/..." />
       </div>
     </div>
     <div class="weights-section">
@@ -174,7 +164,7 @@ input[type=range] { flex: 1; accent-color: var(--green); }
   <div id="loading">
     <div class="ring"></div>
     <div id="steps">
-      <div class="step" id="s0">Geocoding address...</div>
+      <div class="step" id="s0">Geocoding postcode...</div>
       <div class="step" id="s1">Fetching school data from Ofsted...</div>
       <div class="step" id="s2">Checking crime statistics...</div>
       <div class="step" id="s3">Checking flood risk & transport...</div>
@@ -186,10 +176,10 @@ input[type=range] { flex: 1; accent-color: var(--green); }
 </main>
 
 <script>
-  const weights = {schools:30,transport:20,crime:20,amenities:15,environment:10,financials:5};
+const weights = {schools:30,transport:20,crime:20,amenities:15,environment:10,financials:5};
 let stepTimer;
 
-document.getElementById('address').addEventListener('keydown', e => { if(e.key==='Enter') run(); });
+document.getElementById('postcode').addEventListener('keydown', e => { if(e.key==='Enter') run(); });
 
 function toggleWeights(){ document.getElementById('wgrid').classList.toggle('open'); }
 function upW(k,v){ weights[k]=parseInt(v); document.getElementById('wv-'+k).textContent=v+'%'; }
@@ -224,23 +214,15 @@ function startSteps(){
 }
 function stopSteps(){ clearInterval(stepTimer); }
 
-function extractPostcode(text){
-  const m = text.match(/[A-Z]{1,2}[0-9][0-9A-Z]?\s*[0-9][A-Z]{2}/i);
-  return m ? m[0].toUpperCase() : null;
-}
-
 async function run(){
-  const address = document.getElementById('address').value.trim();
-  const price   = document.getElementById('price').value.trim();
-  const tenure  = document.getElementById('tenure').value.trim();
-  const beds    = document.getElementById('beds').value.trim();
+  const postcode    = document.getElementById('postcode').value.trim().toUpperCase();
+  const listing_url = document.getElementById('listing_url').value.trim();
 
-  if(!address){ document.getElementById('address').focus(); return; }
+  if(!postcode){ document.getElementById('postcode').focus(); return; }
 
-  const postcode = extractPostcode(address);
-  if(!postcode){
+  if(!/^[A-Z]{1,2}[0-9][0-9A-Z]?\s*[0-9][A-Z]{2}$/i.test(postcode)){
     document.getElementById('error-box').style.display='block';
-    document.getElementById('error-box').textContent='Please include a postcode in the address (e.g. N19 3RF)';
+    document.getElementById('error-box').textContent='Please enter a valid UK postcode (e.g. N19 3RF)';
     return;
   }
 
@@ -257,7 +239,7 @@ async function run(){
     const res = await fetch('/api/score', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({postcode, address, price, tenure, beds, weights})
+      body: JSON.stringify({postcode, listing_url, weights})
     });
 
     const sc = await res.json();
@@ -265,7 +247,7 @@ async function run(){
 
     stopSteps();
     document.getElementById('loading').style.display='none';
-    renderCard(sc, address, price, tenure);
+    renderCard(sc, postcode, listing_url);
 
   } catch(e) {
     stopSteps();
@@ -278,11 +260,11 @@ async function run(){
   }
 }
 
-function renderCard(sc, address, price, tenure){
+function renderCard(sc, postcode, listing_url){
   const v   = verdict(sc.overallScore);
   const col = overallColor(sc.overallScore);
-  const nearest     = sc.nearestSchools || sc._realData?.nearest_schools || [];
-  const outstanding = sc.outstandingSchools || sc._realData?.outstanding_schools || [];
+  const nearest     = sc.nearestSchools || [];
+  const outstanding = sc.outstandingSchools || [];
 
   const nearestHtml = nearest.length ? `
     <p class="schools-section-title">Two nearest primaries</p>
@@ -319,7 +301,7 @@ function renderCard(sc, address, price, tenure){
 
   const ROW = [
     new Date().toLocaleDateString('en-GB'),
-    sc.address, sc.area, price||'—', tenure||'—',
+    sc.address, sc.area, postcode, listing_url||'—',
     sc.overallScore, v.label,
     (sc.categories.find(c=>c.id==='schools')||{}).score||'—',
     (sc.categories.find(c=>c.id==='transport')||{}).score||'—',
@@ -330,7 +312,7 @@ function renderCard(sc, address, price, tenure){
     sc.summary,
     (sc.greenFlags||[]).join(' · '),
     (sc.watchPoints||[]).join(' · '),
-    address, 'To review'
+    'To review'
   ];
 
   window._row = ROW;
