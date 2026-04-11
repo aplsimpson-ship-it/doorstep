@@ -337,9 +337,14 @@ Return ONLY a JSON object. No markdown, no explanation, just the JSON:
     {{
       "id": "schools",
       "name": "Primary schools",
-      "score": <1-5>,
-      "headline": "one line referencing real school names",
-      "details": "Use exact school names, ratings and distances from real data. Mention if Outstanding schools are faith schools with selective admissions.",
+      "score": <use EXACTLY this rubric based on the two nearest primaries:
+        5 = both Outstanding,
+        4 = one Outstanding and one Good,
+        3 = both Good,
+        2 = one Good and one Requires Improvement or worse,
+        1 = both Requires Improvement or worse or no data>,
+      "headline": "one line referencing real school names and ratings",
+      "details": "Use exact school names, ratings and distances from real data. List both nearest primaries with their ratings. Mention if any Outstanding schools are faith schools with selective admissions.",
       "tags": [{{"label": "School Name — Rating", "type": "good|warn|bad|neutral"}}]
     }},
     {{
