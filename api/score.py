@@ -7,11 +7,12 @@ import os
 import csv
 import io
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timedelta
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 SCHOOLS_CSV_URL = (
-    "https://raw.githubusercontent.com/aplsimpson-ship-it/doorstep/main/schools_primary.csv"
+    "https://raw.githubusercontent.com/aplsimpson-ship-it/doorstep/main/schools_primary_1.csv"
 )
 
 # ── Caches ────────────────────────────────────────────────────────────────────
@@ -100,13 +101,15 @@ def get_schools(lat, lng):
         })
 
     nearby.sort(key=lambda x: x["distance_miles"])
-    candidates  = nearby[:4]  # top 4 by straight line to refine with ORS
+    candidates  = nearby[:4]
     outstanding = [s for s in nearby if "outstanding" in s["ofsted"].lower()][:2]
 
     # Refine distances using ORS walking routes
     ors_key = os.environ.get("ORS_API_KEY", "")
     if ors_key:
-        for s in candidates + [o for o in outstanding if o not in candidates]:
+        seen = {id(s) for s in candidates}
+        extra = [s for s in outstanding if id(s) not in seen]
+        for s in candidates + extra:
             try:
                 ors_payload = json.dumps({
                     "coordinates": [[lng, lat], [s["lng"], s["lat"]]]
@@ -126,14 +129,12 @@ def get_schools(lat, lng):
                 segment = ors_data["routes"][0]["segments"][0]
                 s["distance_miles"] = round(segment["distance"] * 0.000621371, 2)
             except:
-                pass  # keep haversine distance if ORS fails for this school
+                pass
 
-    # Re-sort by ORS distances and pick final 2
     candidates.sort(key=lambda x: x["distance_miles"])
     nearest     = candidates[:2]
     outstanding = sorted(outstanding, key=lambda x: x["distance_miles"])[:2]
 
-    # Strip internal lat/lng before returning
     for s in nearest + outstanding:
         s.pop("lat", None)
         s.pop("lng", None)
@@ -144,22 +145,37 @@ def get_schools(lat, lng):
 
 def get_crime(lat, lng):
     try:
-        url = (
-            f"https://data.police.uk/api/crimes-street/all-crime"
-            f"?lat={lat}&lng={lng}&date=2024-11"
+        # ~0.5 mile radius using polygon
+        delta = 0.00725
+        poly = (
+            f"{lat+delta},{lng}:{lat},{lng+delta}:"
+            f"{lat-delta},{lng}:{lat},{lng-delta}"
         )
-        crimes = fetch_json(url, timeout=10)
-        cats = {}
-        for c in crimes:
-            cat = c.get("category", "other")
-            cats[cat] = cats.get(cat, 0) + 1
-        return {
-            "total":    len(crimes),
-            "burglary": cats.get("burglary", 0),
-            "vehicle":  cats.get("vehicle-crime", 0),
-            "asb":      cats.get("anti-social-behaviour", 0),
-            "violence": cats.get("violent-crime", 0),
-        }
+        # Try last 3 months to get most recent available data
+        for months_back in range(2, 5):
+            date = (datetime.utcnow().replace(day=1) - timedelta(days=30*months_back)).strftime("%Y-%m")
+            url = (
+                f"https://data.police.uk/api/crimes-street/all-crime"
+                f"?poly={poly}&date={date}"
+            )
+            try:
+                crimes = fetch_json(url, timeout=10)
+                if crimes:
+                    cats = {}
+                    for c in crimes:
+                        cat = c.get("category", "other")
+                        cats[cat] = cats.get(cat, 0) + 1
+                    return {
+                        "total":    len(crimes),
+                        "burglary": cats.get("burglary", 0),
+                        "vehicle":  cats.get("vehicle-crime", 0),
+                        "asb":      cats.get("anti-social-behaviour", 0),
+                        "violence": cats.get("violent-crime", 0),
+                        "date":     date,
+                    }
+            except:
+                continue
+        return None
     except:
         return None
 
@@ -208,7 +224,6 @@ def get_transport(lat, lng):
             lines.extend(mode.get("lineIdentifier", []))
         nice_lines = [l.replace("-", " ").title() for l in lines[:4]]
 
-        # ORS walking route
         ors_key = os.environ.get("ORS_API_KEY", "")
         if not ors_key or not station_lat or not station_lng:
             return None
@@ -283,7 +298,7 @@ def build_prompt(address, postcode, price, tenure, beds, weights,
         return "; ".join(parts)
 
     crime_str = (
-        f"Total crimes Nov 2024: {crime['total']} "
+        f"Total crimes {crime.get('date', 'recent')}: {crime['total']} "
         f"(Burglary: {crime['burglary']}, "
         f"Vehicle: {crime['vehicle']}, "
         f"ASB: {crime['asb']}, "
@@ -314,7 +329,7 @@ Bedrooms: {beds or 'not provided'}
 === REAL VERIFIED DATA ===
 Two nearest primary schools: {school_str(nearest_schools)}
 Two nearest Outstanding primaries: {school_str(outstanding_schools) if outstanding_schools else 'None found within 1.5 miles'}
-Crime (Nov 2024, within 1 mile): {crime_str}
+Crime (within 0.5 miles): {crime_str}
 Flood risk: {flood_risk}
 Transport: {transport_str}
 
@@ -358,9 +373,14 @@ Return ONLY a JSON object. No markdown, no explanation, just the JSON:
     {{
       "id": "crime",
       "name": "Crime & safety",
-      "score": <1-5>,
-      "headline": "one line with total crime figure",
-      "details": "Use exact crime figures. Context: inner London average is roughly 100-150 total crimes/month within 1 mile.",
+      "score": <use EXACTLY this rubric based on total crimes within 0.5 miles:
+        5 = under 100 crimes,
+        4 = 100-200 crimes,
+        3 = 200-300 crimes,
+        2 = 300-400 crimes,
+        1 = over 400 crimes>,
+      "headline": "one line with total crime figure and date",
+      "details": "Use exact crime figures and date. Inner London average is 250-350 crimes/month within 0.5 miles. Below 200 is low, 200-350 is average, 350-500 is above average, over 500 is high.",
       "tags": [{{"label": "...", "type": "good|warn|bad|neutral"}}]
     }},
     {{
@@ -447,7 +467,7 @@ class handler(BaseHTTPRequestHandler):
                 ex.submit(get_flood_risk, lat, lng): "flood",
                 ex.submit(get_transport,  lat, lng): "transport",
             }
-            for future in as_completed(futures, timeout=20):
+            for future in as_completed(futures, timeout=25):
                 key = futures[future]
                 try:
                     result = future.result()
