@@ -2,14 +2,15 @@ from http.server import BaseHTTPRequestHandler
 import json
 import urllib.request
 import urllib.error
-import urllib.parse
 import math
 import os
 import csv
 import io
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 
-# ── Ofsted CSV URL (updated monthly by Ofsted) ──────────────────────────────
+# ── Constants ─────────────────────────────────────────────────────────────────
+
 OFSTED_CSV_URL = (
     "https://assets.publishing.service.gov.uk/media/"
     "698b20be95285e721cd7127d/"
@@ -17,11 +18,24 @@ OFSTED_CSV_URL = (
     "latest_inspections_as_at_31_Jan_2026.csv"
 )
 
-# Module-level cache so we only download once per Vercel instance lifetime
+# ── Caches ────────────────────────────────────────────────────────────────────
+
 _ofsted_cache = None
+_gias_cache = None
+
+# ── Ofsted ratings ────────────────────────────────────────────────────────────
+
+def ofsted_code_to_label(code):
+    mapping = {
+        "1": "Outstanding",
+        "2": "Good",
+        "3": "Requires improvement",
+        "4": "Inadequate",
+        "9": "Not yet inspected",
+    }
+    return mapping.get(str(code).strip(), str(code).strip() or "Not rated")
 
 def load_ofsted_ratings():
-    """Download and cache the Ofsted ratings CSV. Returns dict of URN -> rating."""
     global _ofsted_cache
     if _ofsted_cache is not None:
         return _ofsted_cache
@@ -35,9 +49,7 @@ def load_ofsted_ratings():
         ratings = {}
         reader = csv.DictReader(io.StringIO(content))
         for row in reader:
-            # Find URN and overall effectiveness columns
             urn = (row.get("URN") or row.get("urn") or "").strip()
-            # Column name varies slightly across releases
             rating = (
                 row.get("Overall effectiveness") or
                 row.get("Overall Effectiveness") or
@@ -47,22 +59,57 @@ def load_ofsted_ratings():
                 ratings[urn] = rating
         _ofsted_cache = ratings
         return ratings
-    except Exception as e:
+    except:
         _ofsted_cache = {}
         return {}
 
-def ofsted_code_to_label(code):
-    """Convert numeric Ofsted code to human-readable label."""
-    mapping = {
-        "1": "Outstanding",
-        "2": "Good",
-        "3": "Requires improvement",
-        "4": "Inadequate",
-        "9": "Not yet inspected",
-    }
-    return mapping.get(str(code).strip(), str(code).strip() or "Not rated")
+# ── GIAS school data ──────────────────────────────────────────────────────────
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
+def load_gias_schools():
+    global _gias_cache
+    if _gias_cache is not None:
+        return _gias_cache
+    try:
+        today = datetime.utcnow().strftime("%Y%m%d")
+        url = (
+            f"https://ea-edubase-api-prod.azurewebsites.net/edubase/downloads/public/"
+            f"edubasealldata{today}.csv"
+        )
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=25) as r:
+            content = r.read().decode("utf-8", errors="replace")
+        schools = []
+        reader = csv.DictReader(io.StringIO(content))
+        for row in reader:
+            phase  = row.get("PhaseOfEducation (name)", "")
+            status = row.get("EstablishmentStatus (name)", "")
+            if "primary" not in phase.lower():
+                continue
+            if "open" not in status.lower():
+                continue
+            try:
+                lat = float(row.get("Latitude", "") or 0)
+                lng = float(row.get("Longitude", "") or 0)
+            except:
+                continue
+            if not lat or not lng:
+                continue
+            schools.append({
+                "urn":      row.get("URN", "").strip(),
+                "name":     row.get("EstablishmentName", "").strip(),
+                "lat":      lat,
+                "lng":      lng,
+                "postcode": row.get("Postcode", "").strip(),
+                "religious": row.get("ReligiousCharacter (name)", "").strip()
+                             not in ("", "None", "Does not apply"),
+            })
+        _gias_cache = schools
+        return schools
+    except:
+        _gias_cache = []
+        return []
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def haversine(lat1, lon1, lat2, lon2):
     R = 3958.8
@@ -71,11 +118,8 @@ def haversine(lat1, lon1, lat2, lon2):
     a = math.sin(dlat/2)**2 + math.cos(lat1)*math.cos(lat2)*math.sin(dlon/2)**2
     return R * 2 * math.asin(math.sqrt(a))
 
-def fetch_json(url, timeout=8, headers=None):
+def fetch_json(url, timeout=8):
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    if headers:
-        for k, v in headers.items():
-            req.add_header(k, v)
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read())
 
@@ -92,47 +136,29 @@ def get_lat_lng(postcode):
 # ── Schools ───────────────────────────────────────────────────────────────────
 
 def get_schools(lat, lng):
-    """
-    Fetch primary schools from GIAS within 1.5 miles,
-    then look up Ofsted ratings from the cached CSV.
-    Returns (nearest_2, nearest_2_outstanding).
-    """
-    ofsted = load_ofsted_ratings()
-    try:
-        url = (
-            f"https://get-information-schools.service.gov.uk/api/v1/schools"
-            f"?lat={lat}&lon={lng}&radiusInMiles=1.5"
-            f"&phase=primary&includeOffline=false"
-        )
-        data = fetch_json(url, timeout=10)
-        schools = []
-        for s in data.get("results", [])[:40]:
-            slat = s.get("lat")
-            slng = s.get("lon")
-            if not slat or not slng:
-                continue
-            dist = round(haversine(lat, lng, slat, slng), 2)
-            urn  = str(s.get("urn") or "")
-            # Look up rating from Ofsted CSV first, fall back to GIAS field
-            raw_rating = ofsted.get(urn, "")
-            if raw_rating:
-                rating = ofsted_code_to_label(raw_rating)
-            else:
-                rating = s.get("ofstedRating") or "Not yet rated"
-            schools.append({
-                "name":           s.get("name", "Unknown"),
-                "ofsted":         rating,
-                "distance_miles": dist,
-                "urn":            urn,
-                "postcode":       (s.get("address") or {}).get("postcode", ""),
-                "religious":      s.get("religiousCharacter", "None") not in ("", "None", "Does not apply"),
-            })
-        schools.sort(key=lambda x: x["distance_miles"])
-        nearest     = schools[:2]
-        outstanding = [s for s in schools if "outstanding" in s["ofsted"].lower()][:2]
-        return nearest, outstanding
-    except Exception as e:
+    ofsted  = load_ofsted_ratings()
+    schools = load_gias_schools()
+    if not schools:
         return [], []
+    nearby = []
+    for s in schools:
+        dist = haversine(lat, lng, s["lat"], s["lng"])
+        if dist > 1.5:
+            continue
+        raw_rating = ofsted.get(s["urn"], "")
+        rating = ofsted_code_to_label(raw_rating) if raw_rating else "Not yet rated"
+        nearby.append({
+            "name":           s["name"],
+            "ofsted":         rating,
+            "distance_miles": round(dist, 2),
+            "urn":            s["urn"],
+            "postcode":       s["postcode"],
+            "religious":      s["religious"],
+        })
+    nearby.sort(key=lambda x: x["distance_miles"])
+    nearest     = nearby[:2]
+    outstanding = [s for s in nearby if "outstanding" in s["ofsted"].lower()][:2]
+    return nearest, outstanding
 
 # ── Crime ─────────────────────────────────────────────────────────────────────
 
@@ -193,16 +219,14 @@ def get_transport(lat, lng):
         stops = data.get("stopPoints", [])
         if not stops:
             return None
-        # Sort by distance
         stops.sort(key=lambda s: s.get("distance", 9999))
         nearest  = stops[0]
         dist_m   = nearest.get("distance", 0)
         dist_mi  = round(dist_m * 0.000621371, 2)
-        walk_min = max(1, round(dist_m / 80))  # ~80m/min walking pace
+        walk_min = max(1, round(dist_m / 80))
         lines = []
         for mode in nearest.get("lineModeGroups", []):
             lines.extend(mode.get("lineIdentifier", []))
-        # Capitalise line names nicely
         nice_lines = [l.replace("-", " ").title() for l in lines[:4]]
         return {
             "name":           nearest.get("commonName", "Unknown"),
@@ -210,7 +234,7 @@ def get_transport(lat, lng):
             "walk_mins":      walk_min,
             "lines":          nice_lines,
         }
-    except Exception as e:
+    except:
         return None
 
 # ── Claude ────────────────────────────────────────────────────────────────────
@@ -239,7 +263,7 @@ def call_claude(prompt, api_key):
         body = e.read().decode("utf-8")
         raise Exception(f"Claude HTTP {e.code}: {body}")
 
-# ── Prompt builder ────────────────────────────────────────────────────────────
+# ── Prompt ────────────────────────────────────────────────────────────────────
 
 def build_prompt(address, postcode, price, tenure, beds, weights,
                  nearest_schools, outstanding_schools,
@@ -364,7 +388,7 @@ Return ONLY a JSON object. No markdown, no explanation, just the JSON:
 class handler(BaseHTTPRequestHandler):
 
     def log_message(self, format, *args):
-        pass  # Suppress default request logging
+        pass
 
     def do_OPTIONS(self):
         self.send_response(200)
@@ -402,7 +426,6 @@ class handler(BaseHTTPRequestHandler):
             self._respond({"error": f"Could not geocode postcode: {postcode}"}, 400)
             return
 
-        # Fetch all external data in parallel
         nearest_schools, outstanding_schools = [], []
         crime      = None
         flood_risk = "Very low"
@@ -410,12 +433,12 @@ class handler(BaseHTTPRequestHandler):
 
         with ThreadPoolExecutor(max_workers=4) as ex:
             futures = {
-                ex.submit(get_schools,   lat, lng): "schools",
-                ex.submit(get_crime,     lat, lng): "crime",
-                ex.submit(get_flood_risk,lat, lng): "flood",
-                ex.submit(get_transport, lat, lng): "transport",
+                ex.submit(get_schools,    lat, lng): "schools",
+                ex.submit(get_crime,      lat, lng): "crime",
+                ex.submit(get_flood_risk, lat, lng): "flood",
+                ex.submit(get_transport,  lat, lng): "transport",
             }
-            for future in as_completed(futures, timeout=18):
+            for future in as_completed(futures, timeout=20):
                 key = futures[future]
                 try:
                     result = future.result()
@@ -440,7 +463,6 @@ class handler(BaseHTTPRequestHandler):
             raw   = call_claude(prompt, api_key)
             clean = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
             sc    = json.loads(clean)
-            # Always attach real data so frontend can render school rows directly
             sc["nearestSchools"]     = nearest_schools
             sc["outstandingSchools"] = outstanding_schools
             sc["_realData"] = {
