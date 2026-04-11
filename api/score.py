@@ -80,15 +80,8 @@ def load_schools():
 
 def get_schools(lat, lng):
     schools = load_schools()
-
     if not schools:
-        try:
-            req = urllib.request.Request(SCHOOLS_CSV_URL, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=15) as r:
-                first_bytes = r.read(200).decode("utf-8", errors="replace")
-            return [{"name": f"DEBUG empty. First 100 chars: {first_bytes[:100]}", "ofsted": "empty", "distance_miles": 0, "urn": "", "postcode": "", "religious": False}], []
-        except Exception as e:
-            return [{"name": f"DEBUG exception: {str(e)[:150]}", "ofsted": "error", "distance_miles": 0, "urn": "", "postcode": "", "religious": False}], []
+        return [], []
 
     nearby = []
     for s in schools:
@@ -99,17 +92,51 @@ def get_schools(lat, lng):
             "name":           s["name"],
             "ofsted":         s["ofsted"],
             "distance_miles": round(dist, 2),
+            "lat":            s["lat"],
+            "lng":            s["lng"],
             "urn":            s["urn"],
             "postcode":       s["postcode"],
             "religious":      s["religious"],
         })
 
     nearby.sort(key=lambda x: x["distance_miles"])
-    nearest     = nearby[:2]
+    candidates  = nearby[:4]  # top 4 by straight line to refine with ORS
     outstanding = [s for s in nearby if "outstanding" in s["ofsted"].lower()][:2]
 
-    if not nearby:
-        return [{"name": f"DEBUG: {len(schools)} schools loaded, lat={lat}, lng={lng}, first school lat={schools[0]['lat'] if schools else 'none'}", "ofsted": "none nearby", "distance_miles": 0, "urn": "", "postcode": "", "religious": False}], []
+    # Refine distances using ORS walking routes
+    ors_key = os.environ.get("ORS_API_KEY", "")
+    if ors_key:
+        for s in candidates + [o for o in outstanding if o not in candidates]:
+            try:
+                ors_payload = json.dumps({
+                    "coordinates": [[lng, lat], [s["lng"], s["lat"]]]
+                }).encode()
+                ors_req = urllib.request.Request(
+                    "https://api.openrouteservice.org/v2/directions/foot-walking",
+                    data=ors_payload,
+                    headers={
+                        "Authorization": ors_key,
+                        "Content-Type": "application/json",
+                        "User-Agent": "Mozilla/5.0"
+                    },
+                    method="POST"
+                )
+                with urllib.request.urlopen(ors_req, timeout=8) as r:
+                    ors_data = json.loads(r.read())
+                segment = ors_data["routes"][0]["segments"][0]
+                s["distance_miles"] = round(segment["distance"] * 0.000621371, 2)
+            except:
+                pass  # keep haversine distance if ORS fails for this school
+
+    # Re-sort by ORS distances and pick final 2
+    candidates.sort(key=lambda x: x["distance_miles"])
+    nearest     = candidates[:2]
+    outstanding = sorted(outstanding, key=lambda x: x["distance_miles"])[:2]
+
+    # Strip internal lat/lng before returning
+    for s in nearest + outstanding:
+        s.pop("lat", None)
+        s.pop("lng", None)
 
     return nearest, outstanding
 
