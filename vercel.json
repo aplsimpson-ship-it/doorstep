@@ -1,17 +1,12 @@
 {
-  "functions": {
-    "api/score.py": {
-      "runtime": "python3.9"
-    }
-  },
-  "routes": [
+  "rewrites": [
     {
-      "src": "/api/score",
-      "dest": "/api/score.py"
+      "source": "/api/score",
+      "destination": "/api/score.py"
     },
     {
-      "src": "/(.*)",
-      "dest": "/index.html"
+      "source": "/(.*)",
+      "destination": "/index.html"
     }
   ]
 }
