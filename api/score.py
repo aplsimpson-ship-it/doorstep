@@ -1,9 +1,10 @@
 from http.server import BaseHTTPRequestHandler
 import json
 import urllib.request
-import urllib.parse
+import urllib.error
 import math
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 
 def get_lat_lng(postcode):
     postcode_clean = postcode.replace(' ', '')
@@ -27,7 +28,7 @@ def get_schools(lat, lng):
     try:
         url = f"https://get-information-schools.service.gov.uk/api/v1/schools?lat={lat}&lon={lng}&radiusInMiles=1.5&phase=primary&includeOffline=false"
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, timeout=8) as r:
+        with urllib.request.urlopen(req, timeout=6) as r:
             data = json.loads(r.read())
             schools = []
             for s in data.get('results', [])[:30]:
@@ -44,13 +45,13 @@ def get_schools(lat, lng):
             nearest = schools[:2]
             outstanding = [s for s in schools if 'outstanding' in s['ofsted'].lower()][:2]
             return nearest, outstanding
-    except Exception as e:
+    except:
         return [], []
 
 def get_crime(lat, lng):
     try:
         url = f"https://data.police.uk/api/crimes-street/all-crime?lat={lat}&lng={lng}&date=2024-06"
-        with urllib.request.urlopen(url, timeout=10) as r:
+        with urllib.request.urlopen(url, timeout=6) as r:
             crimes = json.loads(r.read())
             total = len(crimes)
             categories = {}
@@ -70,7 +71,7 @@ def get_crime(lat, lng):
 def get_flood_risk(lat, lng):
     try:
         url = f"https://environment.data.gov.uk/flood-monitoring/id/floodAreas?lat={lat}&long={lng}&dist=0.5"
-        with urllib.request.urlopen(url, timeout=8) as r:
+        with urllib.request.urlopen(url, timeout=6) as r:
             data = json.loads(r.read())
             items = data.get('items', [])
             if not items:
@@ -87,7 +88,7 @@ def get_flood_risk(lat, lng):
 def get_tfl(lat, lng):
     try:
         url = f"https://api.tfl.gov.uk/StopPoint?lat={lat}&lon={lng}&stopTypes=NaptanMetroStation,NaptanRailStation&radius=1000&modes=tube,overground,elizabeth-line"
-        with urllib.request.urlopen(url, timeout=8) as r:
+        with urllib.request.urlopen(url, timeout=6) as r:
             data = json.loads(r.read())
             stops = data.get('stopPoints', [])
             if stops:
@@ -111,7 +112,7 @@ def get_tfl(lat, lng):
 def call_claude(prompt, api_key):
     url = "https://api.anthropic.com/v1/messages"
     payload = json.dumps({
-        "model": "claude-sonnet-4-5",
+        "model": "claude-haiku-4-5-20251001",
         "max_tokens": 2000,
         "messages": [{"role": "user", "content": prompt}]
     }).encode()
@@ -126,7 +127,7 @@ def call_claude(prompt, api_key):
         method='POST'
     )
     try:
-        with urllib.request.urlopen(req, timeout=30) as r:
+        with urllib.request.urlopen(req, timeout=25) as r:
             data = json.loads(r.read())
             return data['content'][0]['text']
     except urllib.error.HTTPError as e:
@@ -162,111 +163,72 @@ class handler(BaseHTTPRequestHandler):
             self._respond({'error': f'Could not find postcode {postcode}'}, 400)
             return
 
-        nearest_schools, outstanding_schools = get_schools(lat, lng)
-        crime      = get_crime(lat, lng)
-        flood_risk = get_flood_risk(lat, lng)
-        transport  = get_tfl(lat, lng)
+        # Fetch all external APIs in parallel
+        nearest_schools, outstanding_schools = [], []
+        crime      = None
+        flood_risk = 'Very low'
+        transport  = None
 
-        nearest_str     = '; '.join([f"{s['name']} ({s['ofsted']}, {s['distance_miles']}mi)" for s in nearest_schools]) or 'No data'
-        outstanding_str = '; '.join([f"{s['name']} ({s['distance_miles']}mi)" for s in outstanding_schools]) or 'None within 1.5 miles'
-        crime_str       = f"Total: {crime['total']}, Burglary: {crime['burglary']}, Vehicle: {crime['vehicle']}, ASB: {crime['asb']}, Violence: {crime['violence']}" if crime else 'No data'
-        transport_str   = f"{transport['name']}, {transport['distance_miles']}mi ({transport['walk_mins']} min walk), Lines: {', '.join(transport['lines'])}" if transport else 'No data'
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            futures = {
+                executor.submit(get_schools, lat, lng): 'schools',
+                executor.submit(get_crime, lat, lng): 'crime',
+                executor.submit(get_flood_risk, lat, lng): 'flood',
+                executor.submit(get_tfl, lat, lng): 'tfl',
+            }
+            for future in as_completed(futures, timeout=10):
+                key = futures[future]
+                try:
+                    result = future.result()
+                    if key == 'schools':
+                        nearest_schools, outstanding_schools = result
+                    elif key == 'crime':
+                        crime = result
+                    elif key == 'flood':
+                        flood_risk = result
+                    elif key == 'tfl':
+                        transport = result
+                except:
+                    pass
+
+        nearest_str     = '; '.join([f"{s['name']} ({s['ofsted']}, {s['distance_miles']}mi)" for s in nearest_schools]) or 'No data available'
+        outstanding_str = '; '.join([f"{s['name']} ({s['distance_miles']}mi)" for s in outstanding_schools]) or 'None found within 1.5 miles'
+        crime_str       = f"Total: {crime['total']}, Burglary: {crime['burglary']}, Vehicle: {crime['vehicle']}, ASB: {crime['asb']}, Violence: {crime['violence']}" if crime else 'No data available'
+        transport_str   = f"{transport['name']}, {transport['distance_miles']}mi ({transport['walk_mins']} min walk), Lines: {', '.join(transport['lines'])}" if transport else 'No data available'
         wstr            = ', '.join([f"{k}:{v}%" for k,v in weights.items()]) if weights else 'schools:30%, transport:20%, crime:20%, amenities:15%, environment:10%, financials:5%'
 
-prompt = f"""You are a London property research assistant helping a young family (2.5-year-old, planning 10+ years). Schools are their top priority.
+        prompt = f"""You are a London property research assistant helping a young family (2.5-year-old, planning 10+ years). Schools are their top priority.
 
-Use ONLY the real verified data below for schools, crime, flood risk and transport. Do not substitute your own estimates for these figures.
+Use ONLY the real verified data below for schools, crime, flood risk and transport.
 
 Property: {address}
 Postcode: {postcode}
-{f'Price: {price}' if price else ''}
-{f'Tenure: {tenure}' if tenure else ''}
-{f'Bedrooms: {beds}' if beds else ''}
+Price: {price if price else 'not provided'}
+Tenure: {tenure if tenure else 'not provided'}
+Bedrooms: {beds if beds else 'not provided'}
 
 REAL DATA:
 - Two nearest primaries: {nearest_str}
 - Two nearest Outstanding primaries: {outstanding_str}
-- Crime (Jun 2024, within 1 mile): {crime_str}
+- Crime Jun 2024 within 1 mile: {crime_str}
 - Flood risk: {flood_risk}
 - Transport: {transport_str}
 
 Scoring weights: {wstr}
 
-Return ONLY valid JSON, no markdown, no preamble:
-{{
-  "address": "formatted address",
-  "area": "neighbourhood, borough",
-  "postcode": "{postcode}",
-  "overallScore": 0,
-  "summary": "3 sentence honest family-focused assessment",
-  "keyFacts": {{
-    "nearestTube": "use exact transport data above",
-    "council": "borough name",
-    "schoolsNearby": "summary using exact school data above",
-    "floodRisk": "{flood_risk}"
-  }},
-  "categories": [
-    {{
-      "id": "schools",
-      "name": "Primary schools",
-      "score": 3,
-      "headline": "one line using real school names",
-      "details": "Use the exact school names, ratings and distances provided. List both nearest primaries and both nearest Outstanding schools. Note if any are faith schools.",
-      "tags": [{{"label": "example", "type": "good"}}]
-    }},
-    {{
-      "id": "transport",
-      "name": "Transport",
-      "score": 3,
-      "headline": "one line",
-      "details": "Use exact transport data. Add your knowledge of lines and journey times.",
-      "tags": [{{"label": "example", "type": "good"}}]
-    }},
-    {{
-      "id": "crime",
-      "name": "Crime & safety",
-      "score": 3,
-      "headline": "one line",
-      "details": "Use exact crime figures. Inner London average is roughly 80-120 crimes/month within 1 mile.",
-      "tags": [{{"label": "example", "type": "neutral"}}]
-    }},
-    {{
-      "id": "amenities",
-      "name": "Local amenities",
-      "score": 3,
-      "headline": "one line",
-      "details": "Use your knowledge of this area for amenities.",
-      "tags": [{{"label": "example", "type": "good"}}]
-    }},
-    {{
-      "id": "environment",
-      "name": "Environment",
-      "score": 3,
-      "headline": "one line",
-      "details": "Use exact flood risk. Use your knowledge for ULEZ and noise.",
-      "tags": [{{"label": "example", "type": "good"}}]
-    }},
-    {{
-      "id": "financials",
-      "name": "Financials & value",
-      "score": 3,
-      "headline": "one line",
-      "details": "Use your knowledge for council tax, price comparisons and value.",
-      "tags": [{{"label": "example", "type": "neutral"}}]
-    }}
-  ],
-  "nearestSchools": {json.dumps(nearest_schools)},
-  "outstandingSchools": {json.dumps(outstanding_schools)},
-  "greenFlags": ["point 1", "point 2", "point 3"],
-  "watchPoints": ["concern 1", "concern 2", "concern 3"]
-}}"""        
+Return ONLY valid JSON with no markdown or preamble. Use double curly braces for the JSON structure. The JSON must have these exact keys: address, area, postcode, overallScore, summary, keyFacts (with nearestTube, council, schoolsNearby, floodRisk), categories (array of 6 objects each with id, name, score, headline, details, tags), nearestSchools, outstandingSchools, greenFlags, watchPoints."""
 
         try:
             raw = call_claude(prompt, api_key)
-            sc  = json.loads(raw.replace('```json','').replace('```','').strip())
+            clean = raw.strip()
+            if clean.startswith('```'):
+                clean = clean.split('```')[1]
+                if clean.startswith('json'):
+                    clean = clean[4:]
+            sc = json.loads(clean.strip())
+            sc['nearestSchools'] = nearest_schools
+            sc['outstandingSchools'] = outstanding_schools
             sc['_realData'] = {
-                'nearest_schools': nearest_schools,
-                'outstanding_schools': outstanding_schools,
                 'crime': crime,
                 'flood_risk': flood_risk,
                 'transport': transport
