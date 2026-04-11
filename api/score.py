@@ -104,7 +104,6 @@ def get_schools(lat, lng):
     candidates  = nearby[:4]
     outstanding = [s for s in nearby if "outstanding" in s["ofsted"].lower()][:2]
 
-    # Refine distances using ORS walking routes
     ors_key = os.environ.get("ORS_API_KEY", "")
     if ors_key:
         seen = {id(s) for s in candidates}
@@ -145,13 +144,11 @@ def get_schools(lat, lng):
 
 def get_crime(lat, lng):
     try:
-        # ~0.5 mile radius using polygon
         delta = 0.00725
         poly = (
             f"{lat+delta},{lng}:{lat},{lng+delta}:"
             f"{lat-delta},{lng}:{lat},{lng-delta}"
         )
-        # Try last 3 months to get most recent available data
         for months_back in range(2, 5):
             date = (datetime.utcnow().replace(day=1) - timedelta(days=30*months_back)).strftime("%Y-%m")
             url = (
@@ -284,7 +281,7 @@ def call_claude(prompt, api_key):
 
 # ── Prompt ────────────────────────────────────────────────────────────────────
 
-def build_prompt(address, postcode, price, tenure, beds, weights,
+def build_prompt(postcode, listing_url, weights,
                  nearest_schools, outstanding_schools,
                  crime, flood_risk, transport):
 
@@ -318,13 +315,10 @@ def build_prompt(address, postcode, price, tenure, beds, weights,
 
     return f"""You are a London property research assistant. A young family with a 2.5-year-old (planning 10+ years) wants to evaluate this property. Schools are their top priority.
 
-IMPORTANT: Use the REAL DATA provided below exactly as given for schools, crime, flood risk and transport. Do not substitute your own knowledge for these figures.
+IMPORTANT: Use the REAL DATA provided below exactly as given for schools, crime, flood risk and transport. Do not substitute your own knowledge for these figures. Do not make assumptions about price, tenure, bedrooms, chain status, or property condition — only reference these if explicitly provided below.
 
-Property: {address}
 Postcode: {postcode}
-Price: {price or 'not provided'}
-Tenure: {tenure or 'not provided'}
-Bedrooms: {beds or 'not provided'}
+Listing URL: {listing_url or 'not provided'}
 
 === REAL VERIFIED DATA ===
 Two nearest primary schools: {school_str(nearest_schools)}
@@ -337,11 +331,11 @@ Scoring weights: {wstr}
 
 Return ONLY a JSON object. No markdown, no explanation, just the JSON:
 {{
-  "address": "full formatted address",
+  "address": "best guess at full address from postcode",
   "area": "neighbourhood, borough",
   "postcode": "{postcode}",
   "overallScore": <integer 0-100 reflecting weighted scores>,
-  "summary": "3 honest sentences for a family with a toddler staying 10+ years",
+  "summary": "3 honest sentences for a family with a toddler staying 10+ years. Do not mention price, tenure or chain status unless provided above.",
   "keyFacts": {{
     "nearestTube": "<station name> · <distance>mi · <walk_mins> min walk",
     "council": "borough name",
@@ -404,7 +398,7 @@ Return ONLY a JSON object. No markdown, no explanation, just the JSON:
       "name": "Financials & value",
       "score": <1-5>,
       "headline": "one line",
-      "details": "Council tax band estimate, price vs local average, leasehold issues if relevant, value assessment.",
+      "details": "Council tax band estimate for this postcode. Do not mention price or tenure unless provided above.",
       "tags": [{{"label": "...", "type": "good|warn|bad|neutral"}}]
     }}
   ],
@@ -439,12 +433,9 @@ class handler(BaseHTTPRequestHandler):
             self._respond({"error": "Invalid request body"}, 400)
             return
 
-        postcode = body.get("postcode", "").strip().upper()
-        address  = body.get("address", "").strip()
-        price    = body.get("price", "")
-        tenure   = body.get("tenure", "")
-        beds     = body.get("beds", "")
-        weights  = body.get("weights", {})
+        postcode    = body.get("postcode", "").strip().upper()
+        listing_url = body.get("listing_url", "").strip()
+        weights     = body.get("weights", {})
 
         if not postcode:
             self._respond({"error": "Postcode is required"}, 400)
@@ -483,7 +474,7 @@ class handler(BaseHTTPRequestHandler):
                     pass
 
         prompt = build_prompt(
-            address, postcode, price, tenure, beds, weights,
+            postcode, listing_url, weights,
             nearest_schools, outstanding_schools,
             crime, flood_risk, transport,
         )
