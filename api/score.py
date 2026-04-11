@@ -169,7 +169,7 @@ class handler(BaseHTTPRequestHandler):
         transport_str   = f"{transport['name']}, {transport['distance_miles']}mi ({transport['walk_mins']} min walk), Lines: {', '.join(transport['lines'])}" if transport else 'No data'
         wstr            = ', '.join([f"{k}:{v}%" for k,v in weights.items()]) if weights else 'schools:30%, transport:20%, crime:20%, amenities:15%, environment:10%, financials:5%'
 
-        prompt = f"""You are a London property research assistant helping a young family (2.5-year-old, planning 10+ years). Schools are their top priority.
+prompt = f"""You are a London property research assistant helping a young family (2.5-year-old, planning 10+ years). Schools are their top priority.
 
 Use ONLY the real verified data below for schools, crime, flood risk and transport. Do not substitute your own estimates for these figures.
 
@@ -193,7 +193,7 @@ Return ONLY valid JSON, no markdown, no preamble:
   "address": "formatted address",
   "area": "neighbourhood, borough",
   "postcode": "{postcode}",
-  "overallScore": <0-100>,
+  "overallScore": 0,
   "summary": "3 sentence honest family-focused assessment",
   "keyFacts": {{
     "nearestTube": "use exact transport data above",
@@ -205,22 +205,57 @@ Return ONLY valid JSON, no markdown, no preamble:
     {{
       "id": "schools",
       "name": "Primary schools",
-      "score": <1-5>,
+      "score": 3,
       "headline": "one line using real school names",
       "details": "Use the exact school names, ratings and distances provided. List both nearest primaries and both nearest Outstanding schools. Note if any are faith schools.",
-      "tags": [{{"label":"...","type":"good|warn|bad|neutral"}}]
+      "tags": [{{"label": "example", "type": "good"}}]
     }},
-    {{"id":"transport","name":"Transport","score":<1-5>,"headline":"one line","details":"Use exact transport data. Add your knowledge of lines and journey times.","tags":[{{"label":"...","type":"good|warn|bad|neutral"}}]}},
-    {{"id":"crime","name":"Crime & safety","score":<1-5>,"headline":"one line","details":"Use exact crime figures. Inner London average is roughly 80-120 crimes/month within 1 mile.","tags":[{{"label":"...","type":"good|warn|bad|neutral"}}]}},
-    {{"id":"amenities","name":"Local amenities","score":<1-5>,"headline":"one line","details":"Use your knowledge of this area for amenities.","tags":[{{"label":"...","type":"good|warn|bad|neutral"}}]}},
-    {{"id":"environment","name":"Environment","score":<1-5>,"headline":"one line","details":"Use exact flood risk. Use your knowledge for ULEZ and noise.","tags":[{{"label":"...","type":"good|warn|bad|neutral"}}]}},
-    {{"id":"financials","name":"Financials & value","score":<1-5>,"headline":"one line","details":"Use your knowledge for council tax, price comparisons and value.","tags":[{{"label":"...","type":"good|warn|bad|neutral"}}]}}
+    {{
+      "id": "transport",
+      "name": "Transport",
+      "score": 3,
+      "headline": "one line",
+      "details": "Use exact transport data. Add your knowledge of lines and journey times.",
+      "tags": [{{"label": "example", "type": "good"}}]
+    }},
+    {{
+      "id": "crime",
+      "name": "Crime & safety",
+      "score": 3,
+      "headline": "one line",
+      "details": "Use exact crime figures. Inner London average is roughly 80-120 crimes/month within 1 mile.",
+      "tags": [{{"label": "example", "type": "neutral"}}]
+    }},
+    {{
+      "id": "amenities",
+      "name": "Local amenities",
+      "score": 3,
+      "headline": "one line",
+      "details": "Use your knowledge of this area for amenities.",
+      "tags": [{{"label": "example", "type": "good"}}]
+    }},
+    {{
+      "id": "environment",
+      "name": "Environment",
+      "score": 3,
+      "headline": "one line",
+      "details": "Use exact flood risk. Use your knowledge for ULEZ and noise.",
+      "tags": [{{"label": "example", "type": "good"}}]
+    }},
+    {{
+      "id": "financials",
+      "name": "Financials & value",
+      "score": 3,
+      "headline": "one line",
+      "details": "Use your knowledge for council tax, price comparisons and value.",
+      "tags": [{{"label": "example", "type": "neutral"}}]
+    }}
   ],
   "nearestSchools": {json.dumps(nearest_schools)},
   "outstandingSchools": {json.dumps(outstanding_schools)},
-  "greenFlags": ["point 1","point 2","point 3"],
-  "watchPoints": ["concern 1","concern 2","concern 3"]
-}}"""
+  "greenFlags": ["point 1", "point 2", "point 3"],
+  "watchPoints": ["concern 1", "concern 2", "concern 3"]
+}}"""        
 
         try:
             raw = call_claude(prompt, api_key)
