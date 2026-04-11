@@ -125,9 +125,13 @@ def call_claude(prompt, api_key):
         },
         method='POST'
     )
-    with urllib.request.urlopen(req, timeout=30) as r:
-        data = json.loads(r.read())
-        return data['content'][0]['text']
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            data = json.loads(r.read())
+            return data['content'][0]['text']
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode('utf-8')
+        raise Exception(f"Claude HTTP {e.code}: {error_body}")
 
 class handler(BaseHTTPRequestHandler):
 
