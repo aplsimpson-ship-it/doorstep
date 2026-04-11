@@ -1,0 +1,17 @@
+{
+  "functions": {
+    "api/score.py": {
+      "runtime": "python3.9"
+    }
+  },
+  "routes": [
+    {
+      "src": "/api/score",
+      "dest": "/api/score.py"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/index.html"
+    }
+  ]
+}
