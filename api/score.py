@@ -378,12 +378,16 @@ Return ONLY a JSON object. No markdown, no explanation, just the JSON:
       "details": "Use exact school names, ratings and distances from real data. List both nearest primaries with their ratings. Mention if any Outstanding schools are faith schools with selective admissions.",
       "tags": [{{"label": "School Name — Rating", "type": "good|warn|bad|neutral"}}]
     }},
-    {{
+{{
       "id": "transport",
       "name": "Transport",
-      "score": <1-5>,
-      "headline": "one line with station name and walk time",
-      "details": "Use exact transport data. Add context about lines and typical journey times to central London.",
+      "score": <use EXACTLY this rubric based on walk time to nearest tube or Elizabeth line station only:
+        5 = under 10 min walk,
+        4 = 11-15 min walk,
+        3 = 16-20 min walk,
+        1 = over 20 min walk>,
+      "headline": "one line with tube station name and walk time",
+      "details": "Use exact transport data. Base score on tube/Elizabeth line walk time only. Add context about lines and typical journey times to central London. If overground/rail is also listed, mention it but note it does not affect the score.",
       "tags": [{{"label": "...", "type": "good|warn|bad|neutral"}}]
     }},
     {{
