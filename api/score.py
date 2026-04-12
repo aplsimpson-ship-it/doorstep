@@ -357,7 +357,7 @@ Return ONLY a JSON object. No markdown, no explanation, just the JSON:
   "address": "best guess at full address from postcode",
   "area": "neighbourhood, borough",
   "postcode": "{postcode}",
-  "overallScore": <integer 0-100 reflecting weighted scores>,
+  "overallScore": 0,
   "summary": "3 honest sentences for a family with a toddler staying 10+ years. Do not mention price, tenure or chain status unless provided above.",
   "keyFacts": {{
         "nearestTube": "nearest tube/Elizabeth line station with distance and walk time. If overground/rail is also provided and closer, list that too.",    "council": "borough name",
@@ -505,6 +505,23 @@ class handler(BaseHTTPRequestHandler):
             raw   = call_claude(prompt, api_key)
             clean = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
             sc    = json.loads(clean)
+            # Recalculate overall score precisely in Python
+            weight_map = {
+                "schools":     weights.get("schools", 30),
+                "transport":   weights.get("transport", 20),
+                "crime":       weights.get("crime", 20),
+                "amenities":   weights.get("amenities", 15),
+                "environment": weights.get("environment", 10),
+                "financials":  weights.get("financials", 5),
+            }
+            total_weight = sum(weight_map.values())
+            weighted_sum = 0
+            for cat in sc.get("categories", []):
+                cat_id = cat.get("id")
+                cat_score = cat.get("score", 0)
+                if cat_id in weight_map:
+                    weighted_sum += (cat_score / 5) * weight_map[cat_id]
+            sc["overallScore"] = round((weighted_sum / total_weight) * 100)
             sc["nearestSchools"]     = nearest_schools
             sc["outstandingSchools"] = outstanding_schools
             sc["_realData"] = {
