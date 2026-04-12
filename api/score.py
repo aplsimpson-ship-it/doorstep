@@ -70,8 +70,7 @@ def load_schools():
                 "lng":      lng,
                 "postcode": row.get("Postcode", "").strip(),
                 "ofsted":   row.get("OfstedRating", "Not yet rated").strip(),
-                "religious": row.get("ReligiousCharacter", "").strip()
-                             not in ("", "None", "Does not apply"),
+                "religious": row.get("ReligiousCharacter", "").strip() == "Yes",
             })
         _schools_cache = schools
         return schools
