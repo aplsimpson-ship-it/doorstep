@@ -510,6 +510,59 @@ class handler(BaseHTTPRequestHandler):
             clean = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
             sc    = json.loads(clean)
             # Recalculate overall score precisely in Python
+  # Override transport score in Python based on exact rubric
+            tube_walk_mins = transport["tube"]["walk_mins"] if transport and transport.get("tube") else 999
+            if tube_walk_mins <= 10:
+                transport_score = 5
+            elif tube_walk_mins <= 15:
+                transport_score = 4
+            elif tube_walk_mins <= 20:
+                transport_score = 3
+            else:
+                transport_score = 1
+            for cat in sc.get("categories", []):
+                if cat["id"] == "transport":
+                    cat["score"] = transport_score
+                    break
+
+            # Override schools score in Python based on exact rubric
+            def ofsted_rank(rating):
+                r = rating.lower()
+                if "outstanding" in r: return 4
+                if "good" in r: return 3
+                if "requires" in r: return 2
+                if "inadequate" in r: return 1
+                return 0
+            if nearest_schools:
+                s1 = ofsted_rank(nearest_schools[0]["ofsted"]) if len(nearest_schools) > 0 else 0
+                s2 = ofsted_rank(nearest_schools[1]["ofsted"]) if len(nearest_schools) > 1 else 0
+                top = max(s1, s2)
+                bot = min(s1, s2)
+                if top == 4 and bot == 4:   schools_score = 5
+                elif top == 4 and bot == 3: schools_score = 4
+                elif top == 3 and bot == 3: schools_score = 3
+                elif top == 3 and bot <= 2: schools_score = 2
+                else:                        schools_score = 1
+            else:
+                schools_score = 1
+            for cat in sc.get("categories", []):
+                if cat["id"] == "schools":
+                    cat["score"] = schools_score
+                    break
+
+            # Override crime score in Python based on exact rubric
+            crime_total = crime["total"] if crime else 999
+            if crime_total < 100:   crime_score = 5
+            elif crime_total < 200: crime_score = 4
+            elif crime_total < 300: crime_score = 3
+            elif crime_total < 400: crime_score = 2
+            else:                   crime_score = 1
+            for cat in sc.get("categories", []):
+                if cat["id"] == "crime":
+                    cat["score"] = crime_score
+                    break
+
+            # Recalculate overall score precisely in Python
             weight_map = {
                 "schools":     weights.get("schools", 30),
                 "transport":   weights.get("transport", 20),
