@@ -43,6 +43,7 @@ input[type=text]::placeholder { color: var(--ink-3); }
 .weight-row { display: flex; align-items: center; gap: 8px; }
 input[type=range] { flex: 1; accent-color: var(--green); }
 .wval { font-family: var(--mono); font-size: 12px; color: var(--ink-2); min-width: 30px; text-align: right; }
+.rubric { font-size: 10px; color: var(--ink-3); margin-top: 4px; line-height: 1.5; }
 .submit-row { display: flex; align-items: center; gap: 16px; margin-top: 18px; }
 .btn-go { font-family: var(--sans); font-size: 15px; font-weight: 500; background: var(--ink); color: var(--paper); border: none; border-radius: 8px; padding: 12px 26px; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; transition: background 0.15s; }
 .btn-go:hover:not(:disabled) { background: var(--green); }
@@ -146,12 +147,12 @@ input[type=range] { flex: 1; accent-color: var(--green); }
         <button class="weights-toggle" onclick="toggleWeights()">Customise weights</button>
       </div>
       <div class="weights-grid" id="wgrid">
-        <div class="weight-item"><label>Primary schools</label><div class="weight-row"><input type="range" id="w-schools" min="5" max="50" value="30" step="1" oninput="upW('schools',this.value)"><span class="wval" id="wv-schools">30%</span></div></div>
-        <div class="weight-item"><label>Transport</label><div class="weight-row"><input type="range" id="w-transport" min="5" max="50" value="20" step="1" oninput="upW('transport',this.value)"><span class="wval" id="wv-transport">20%</span></div></div>
-        <div class="weight-item"><label>Crime</label><div class="weight-row"><input type="range" id="w-crime" min="5" max="50" value="20" step="1" oninput="upW('crime',this.value)"><span class="wval" id="wv-crime">20%</span></div></div>
-        <div class="weight-item"><label>Amenities</label><div class="weight-row"><input type="range" id="w-amenities" min="5" max="50" value="15" step="1" oninput="upW('amenities',this.value)"><span class="wval" id="wv-amenities">15%</span></div></div>
-        <div class="weight-item"><label>Environment</label><div class="weight-row"><input type="range" id="w-environment" min="5" max="50" value="10" step="1" oninput="upW('environment',this.value)"><span class="wval" id="wv-environment">10%</span></div></div>
-        <div class="weight-item"><label>Financials</label><div class="weight-row"><input type="range" id="w-financials" min="5" max="50" value="5" step="1" oninput="upW('financials',this.value)"><span class="wval" id="wv-financials">5%</span></div></div>
+<div class="weight-item"><label>Primary schools</label><div class="weight-row"><input type="range" id="w-schools" min="5" max="50" value="30" step="1" oninput="upW('schools',this.value)"><span class="wval" id="wv-schools">30%</span></div><div class="rubric">5★ Both Outstanding · 4★ Outstanding + Good · 3★ Both Good · 2★ Good + RI · 1★ Both RI or worse</div></div>
+        <div class="weight-item"><label>Transport</label><div class="weight-row"><input type="range" id="w-transport" min="5" max="50" value="20" step="1" oninput="upW('transport',this.value)"><span class="wval" id="wv-transport">20%</span></div><div class="rubric">5★ &lt;10 min walk to tube · 4★ 11–15 min · 3★ 16–20 min · 1★ &gt;20 min</div></div>
+        <div class="weight-item"><label>Crime</label><div class="weight-row"><input type="range" id="w-crime" min="5" max="50" value="20" step="1" oninput="upW('crime',this.value)"><span class="wval" id="wv-crime">20%</span></div><div class="rubric">5★ &lt;100 crimes/mo · 4★ 100–200 · 3★ 200–300 · 2★ 300–400 · 1★ &gt;400 (within 0.5mi)</div></div>
+        <div class="weight-item"><label>Amenities</label><div class="weight-row"><input type="range" id="w-amenities" min="5" max="50" value="15" step="1" oninput="upW('amenities',this.value)"><span class="wval" id="wv-amenities">15%</span></div><div class="rubric">Scored by Claude based on local supermarkets, parks, GP, restaurants and high street</div></div>
+        <div class="weight-item"><label>Environment</label><div class="weight-row"><input type="range" id="w-environment" min="5" max="50" value="10" step="1" oninput="upW('environment',this.value)"><span class="wval" id="wv-environment">10%</span></div><div class="rubric">Scored by Claude based on flood risk, ULEZ status, air quality and nearby roads</div></div>
+        <div class="weight-item"><label>Financials</label><div class="weight-row"><input type="range" id="w-financials" min="5" max="50" value="5" step="1" oninput="upW('financials',this.value)"><span class="wval" id="wv-financials">5%</span></div><div class="rubric">Scored by Claude based on council tax band and local price comparisons</div></div>
       </div>
     </div>
     <div class="submit-row">
